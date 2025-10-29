@@ -27,7 +27,7 @@ from telegram.error import TelegramError, Forbidden, BadRequest
 
 # --- Configuration ---
 # Essential: Bot Token
-TOKEN = "7161477910:AAFKz6L68vbciSirhl8IrDkIa_T3D8X0iqo"
+TOKEN = "8405925930:AAFEIfylx6AuqP5TgkwKCtN7iXd39D_kMSg"
 
 # API Configuration
 API_BASE_URL = "https://garenagwt.vercel.app/token"
@@ -51,8 +51,6 @@ VIP_FILE = os.path.join(DATA_DIR, 'vip_users.json')
 GITHUB_CONFIG_FILE = os.path.join(DATA_DIR, 'github_configs.json')
 KNOWN_USERS_FILE = os.path.join(DATA_DIR, 'known_users.json')
 SCHEDULED_FILES_CONFIG = os.path.join(DATA_DIR, 'scheduled_files.json')
-ROTATION_FILES_CONFIG = os.path.join(DATA_DIR, 'rotation_files.json')
-ROTATION_STATUS_FILE = os.path.join(DATA_DIR, 'rotation_status.json')
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -177,10 +175,9 @@ def save_json_data(filepath: str, data: dict | list) -> bool:
                 logger.warning(f"Could not remove temporary save file {temp_filepath}: {e}")
 
 # --- VIP User Management ---
-def load_vip_data() -> dict[str, dict]:
+def load_vip_data() -> dict:
     """Loads VIP user data from the JSON file."""
-    data = load_json_data(VIP_FILE, {})
-    return data if isinstance(data, dict) else {}
+    return load_json_data(VIP_FILE, {})
 
 def save_vip_data(data: dict) -> bool:
     """Saves VIP user data to the JSON file."""
@@ -224,10 +221,9 @@ def get_vip_expiry(user_id: int) -> str | None:
     return None
 
 # --- GitHub Config Management ---
-def load_github_configs() -> dict[str, dict]:
+def load_github_configs() -> dict:
     """Loads GitHub configuration data."""
-    data = load_json_data(GITHUB_CONFIG_FILE, {})
-    return data if isinstance(data, dict) else {}
+    return load_json_data(GITHUB_CONFIG_FILE, {})
 
 def save_github_configs(data: dict) -> bool:
     """Saves GitHub configuration data."""
@@ -269,33 +265,13 @@ def add_known_user(user_id: int) -> None:
              logger.error(f"Failed attempt to save known users file after adding {user_id}.")
 
 # --- Scheduled File Management ---
-def load_scheduled_files() -> dict[str, dict]:
+def load_scheduled_files() -> dict:
     """Loads scheduled file configurations."""
-    data = load_json_data(SCHEDULED_FILES_CONFIG, {})
-    return data if isinstance(data, dict) else {}
+    return load_json_data(SCHEDULED_FILES_CONFIG, {})
 
 def save_scheduled_files(data: dict) -> bool:
     """Saves scheduled file configurations."""
     return save_json_data(SCHEDULED_FILES_CONFIG, data)
-
-# --- Rotation File Management ---
-def load_rotation_files() -> dict[str, dict]:
-    """Loads rotation file configurations."""
-    data = load_json_data(ROTATION_FILES_CONFIG, {})
-    return data if isinstance(data, dict) else {}
-
-def save_rotation_files(data: dict) -> bool:
-    """Saves rotation file configurations."""
-    return save_json_data(ROTATION_FILES_CONFIG, data)
-
-def load_rotation_status() -> dict:
-    """Loads rotation status data."""
-    data = load_json_data(ROTATION_STATUS_FILE, {})
-    return data if isinstance(data, dict) else {}
-
-def save_rotation_status(data: dict) -> bool:
-    """Saves rotation status data."""
-    return save_json_data(ROTATION_STATUS_FILE, data)
 
 # --- Command Buttons ---
 COMMAND_BUTTONS_LAYOUT = [
@@ -387,11 +363,7 @@ async def help_command(update: Update, context: CallbackContext) -> None:
         "  `/setfile <Interval> <ScheduleName.json>` - Start scheduling a file for auto-processing (e.g., `/setfile 12h my_accounts.json`). Bot will ask for the file.\n"
         "     *Interval format:* `Xm` (minutes), `Xh` (hours), `Xd` (days). Min interval: 5m.\n"
         "  `/removefile <ScheduleName.json>` - Stop auto-processing for a scheduled file.\n"
-        "  `/scheduledfiles` - List your currently scheduled files.\n"
-        "  `/setrotation <Interval> <RotationName>` - Set up a file rotation for auto-processing. Bot will ask for 4-8 files.\n"
-        "  `/removerotation <RotationName>` - Stop auto-processing for a rotation.\n"
-        "  `/listrotations` - List your currently set up rotations.\n"
-        "  `/finishrotation` - Finish setting up a rotation after sending files.\n\n"
+        "  `/scheduledfiles` - List your currently scheduled files.\n\n"
         "👑 *Admin Commands (Bot Admin only - requires ADMIN_ID to be set):*\n"
         "  `/vip add <user_id> <days>` - Add/extend VIP\n"
         "  `/vip remove <user_id>` - Remove VIP, GitHub config & ALL user's scheduled files\n"
@@ -590,7 +562,7 @@ async def process_account(session: aiohttp.ClientSession, account: dict, semapho
              return None, None, None, lost_info, error_reason
 
 async def handle_document(update: Update, context: CallbackContext) -> None:
-    """Handle incoming JSON documents OR files sent after /setfile or /setrotation."""
+    """Handle incoming JSON documents OR files sent after /setfile."""
     if not await check_channel_membership(update, context):
         return
 
@@ -603,9 +575,6 @@ async def handle_document(update: Update, context: CallbackContext) -> None:
 
     if context.user_data.get('pending_schedule'):
         await handle_scheduled_file_upload(update, context)
-        return
-    elif context.user_data.get('pending_rotation'):
-        await handle_rotation_file_upload(update, context)
         return
 
     process_button_text = COMMAND_BUTTONS_LAYOUT[0][0]
@@ -1948,520 +1917,6 @@ async def list_scheduled_files(update: Update, context: CallbackContext) -> None
     else:
         await message.reply_text(final_message, parse_mode=ParseMode.MARKDOWN, reply_markup=main_reply_markup)
 
-# --- Rotation Command Handlers ---
-
-async def set_rotation_files_start(update: Update, context: CallbackContext) -> None:
-    """Starts the process of setting up a rotation of files for automatic processing."""
-    if not await check_channel_membership(update, context):
-        return
-
-    user = update.effective_user
-    message = update.message
-    if not user or not message: return
-    user_id = user.id
-    add_known_user(user.id)
-    context.user_data.pop('waiting_for_json', None)
-
-    if not is_user_vip(user.id):
-        await message.reply_text(
-            "❌ File rotation is a VIP feature. Use /vipshop to upgrade.",
-            reply_markup=main_reply_markup
-        )
-        return
-
-    args = context.args
-    usage_text = (
-        "🔄 *Set Up File Rotation for Auto-Processing*\n\n"
-        "*Usage:* `/setrotation <Interval> <RotationName>`\n"
-        "*Interval:* Number followed by `m` (minutes), `h` (hours), or `d` (days). Min interval: 5m.\n"
-        "*RotationName:* A name for this rotation.\n\n"
-        "*Example:* `/setrotation 12h my_rotation`\n\n"
-        "After using the command, you'll be prompted to send 4-8 JSON files one by one."
-    )
-
-    if len(args) != 2:
-        await message.reply_text(
-            f"❌ Incorrect number of arguments. Expected 2, got {len(args)}.\n\n{usage_text}",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=main_reply_markup
-        )
-        return
-
-    interval_str, rotation_name = args[0], args[1]
-
-    interval_seconds = parse_interval(interval_str)
-    min_interval_seconds = 5 * 60
-    if interval_seconds is None:
-        await message.reply_text(
-            f"❌ Invalid interval format: `{escape(interval_str)}`. Use formats like `30m`, `6h`, `1d`.\n\n{usage_text}",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=main_reply_markup
-        )
-        return
-    if interval_seconds < min_interval_seconds:
-         await message.reply_text(
-            f"❌ Interval is too short. Minimum interval is {format_time(min_interval_seconds)} (`{min_interval_seconds // 60}m`).\n\n{usage_text}",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=main_reply_markup
-         )
-         return
-
-    # Initialize rotation setup in user data
-    context.user_data['pending_rotation'] = {
-        'interval_seconds': interval_seconds,
-        'rotation_name': rotation_name,
-        'files': [],
-        'max_files': 8,
-        'min_files': 4
-    }
-
-    logger.info(f"User {user_id} initiated rotation setup for '{rotation_name}' with interval {interval_seconds}s. Waiting for files.")
-    await message.reply_text(
-        f"✅ Okay, rotation details accepted for `'{escape(rotation_name)}'` "
-        f"(Interval: {escape(interval_str)} = {format_time(interval_seconds)}).\n\n"
-        f"📎 **Now, please send the first JSON file** for this rotation.\n"
-        f"You need to send between {context.user_data['pending_rotation']['min_files']} and {context.user_data['pending_rotation']['max_files']} files.\n"
-        f"Send them one by one. Use /cancel to abort.",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=ReplyKeyboardRemove()
-    )
-
-async def handle_rotation_file_upload(update: Update, context: CallbackContext) -> None:
-    """Handles JSON file uploads specifically for a pending rotation."""
-    if not await check_channel_membership(update, context):
-        return
-
-    user = update.effective_user
-    message = update.message
-    if not user or not message or not message.document:
-        logger.warning(f"handle_rotation_file_upload called without user/message/document for user {user.id if user else 'Unknown'}")
-        if context.user_data.get('pending_rotation'):
-             await message.reply_text("Please send the JSON *file* for rotation, not text. Or use /cancel.", reply_markup=main_reply_markup)
-        return
-
-    user_id = user.id
-    pending_rotation = context.user_data.get('pending_rotation')
-    if not pending_rotation:
-        return
-
-    rotation_name = pending_rotation['rotation_name']
-    interval_seconds = pending_rotation['interval_seconds']
-    files = pending_rotation['files']
-    max_files = pending_rotation['max_files']
-    min_files = pending_rotation['min_files']
-
-    document = message.document
-    original_telegram_filename = document.file_name or f"file_{document.file_id}.json"
-
-    is_json_mime = document.mime_type and document.mime_type.lower() == 'application/json'
-    has_json_extension = original_telegram_filename and original_telegram_filename.lower().endswith('.json')
-    if not is_json_mime and not has_json_extension:
-        await message.reply_text(f"❌ The file you sent (`{escape(original_telegram_filename)}`) doesn't seem to be a JSON file (.json).", reply_markup=main_reply_markup)
-        return
-
-    if document.file_size and document.file_size > MAX_FILE_SIZE:
-        await message.reply_text(
-            f"⚠️ File is too large ({document.file_size / 1024 / 1024:.2f} MB). Max: {MAX_FILE_SIZE / 1024 / 1024:.1f} MB.",
-            reply_markup=main_reply_markup
-        )
-        return
-
-    temp_download_path = os.path.join(TEMP_DIR, f'rotation_down_{user_id}_{rotation_name}_{len(files)}_{int(time.time())}.json')
-    persistent_file_path = os.path.join(SCHEDULED_FILES_DATA_DIR, f"{user_id}_{rotation_name}_file_{len(files)}")
-    progress_msg = None
-
-    try:
-        os.makedirs(TEMP_DIR, exist_ok=True)
-        os.makedirs(SCHEDULED_FILES_DATA_DIR, exist_ok=True)
-
-        progress_msg = await message.reply_text(f"⏳ Downloading `{escape(original_telegram_filename)}` for rotation `'{escape(rotation_name)}'`...", parse_mode=ParseMode.MARKDOWN)
-
-        bot_file = await context.bot.get_file(document.file_id)
-        await bot_file.download_to_drive(temp_download_path)
-        logger.info(f"Downloaded file for rotation '{rotation_name}' (user {user_id}) to temp path: {temp_download_path}")
-
-        actual_size = os.path.getsize(temp_download_path)
-        if actual_size > MAX_FILE_SIZE:
-             raise ValueError(f"Downloaded file size ({actual_size / 1024 / 1024:.2f} MB) exceeds limit.")
-
-        try:
-            with open(temp_download_path, 'r', encoding='utf-8') as f_check:
-                content = json.load(f_check)
-                if not isinstance(content, list):
-                     raise ValueError("JSON content must be an array (list).")
-                if content and not all(isinstance(item, dict) for item in content):
-                     first_bad = next((x for x in content if not isinstance(x, dict)), None)
-                     raise ValueError(f"All items in the list must be JSON objects (`{{...}}`). Found: {type(first_bad)}")
-                logger.info(f"Rotation: JSON syntax and structure validation passed for rotation file '{rotation_name}' (user {user_id}).")
-        except json.JSONDecodeError as json_err:
-             error_line_info = ""
-             if hasattr(json_err, 'lineno') and hasattr(json_err, 'colno'):
-                 error_line_info = f" near line {json_err.lineno}, column {json_err.colno}"
-             raise ValueError(f"Invalid JSON format in the uploaded file{error_line_info}. Error: {json_err.msg}")
-        except ValueError as val_err:
-             raise val_err
-        except Exception as read_err:
-             raise ValueError(f"Could not read or validate the downloaded file: {read_err}")
-
-        shutil.move(temp_download_path, persistent_file_path)
-        logger.info(f"Stored file for rotation '{rotation_name}' (user {user_id}) persistently at: {persistent_file_path}")
-
-        # Add file info to pending rotation
-        files.append({
-            'file_id': document.file_id,
-            'stored_file_path': persistent_file_path,
-            'original_telegram_filename': original_telegram_filename,
-            'added_on_iso': datetime.now(timezone.utc).isoformat()
-        })
-
-        # Check if we have enough files or reached max
-        if len(files) >= max_files:
-            # We have reached the maximum number of files, save the rotation
-            await save_rotation_setup(update, context, progress_msg)
-        elif len(files) >= min_files:
-            # We have minimum files, ask if user wants to add more
-            await context.bot.edit_message_text(
-                chat_id=progress_msg.chat_id, message_id=progress_msg.message_id,
-                text=f"✅ File `{escape(original_telegram_filename)}` added to rotation `'{escape(rotation_name)}'`.\n\n"
-                     f"You have added {len(files)} files. You can add up to {max_files} files.\n"
-                     f"Send another file or use /finishrotation to complete the setup.",
-                parse_mode=ParseMode.MARKDOWN
-            )
-        else:
-            # Still need more files
-            await context.bot.edit_message_text(
-                chat_id=progress_msg.chat_id, message_id=progress_msg.message_id,
-                text=f"✅ File `{escape(original_telegram_filename)}` added to rotation `'{escape(rotation_name)}'`.\n\n"
-                     f"You have added {len(files)} files. Please send at least {min_files} files.\n"
-                     f"Send the next file.",
-                parse_mode=ParseMode.MARKDOWN
-            )
-
-    except (ValueError, IOError, OSError, TelegramError) as e:
-        logger.error(f"Error setting up rotation file '{rotation_name}' for user {user_id}: {e}", exc_info=False)
-        error_text = f"❌ Error adding file to rotation `'{escape(rotation_name)}'`:\n`{escape(str(e))}`\n\nPlease try again or use /cancel."
-        if progress_msg:
-            await context.bot.edit_message_text(
-                chat_id=progress_msg.chat_id, message_id=progress_msg.message_id,
-                text=error_text, parse_mode=ParseMode.MARKDOWN
-            )
-        else:
-            await message.reply_text(error_text, reply_markup=main_reply_markup, parse_mode=ParseMode.MARKDOWN)
-        if os.path.exists(persistent_file_path):
-            try: os.remove(persistent_file_path)
-            except OSError: logger.warning(f"Could not clean up stored rotation file after error: {persistent_file_path}")
-    except Exception as e:
-        logger.error(f"Unexpected error setting up rotation file '{rotation_name}' for user {user_id}: {e}", exc_info=True)
-        error_text = f"❌ An unexpected error occurred while adding file to rotation `'{escape(rotation_name)}'`."
-        if progress_msg:
-             try:
-                 await context.bot.edit_message_text(
-                      chat_id=progress_msg.chat_id, message_id=progress_msg.message_id,
-                      text=error_text, parse_mode=ParseMode.MARKDOWN
-                  )
-             except TelegramError as edit_err:
-                 logger.error(f"Failed to edit progress message in general exception block: {edit_err}")
-                 await message.reply_text(error_text, reply_markup=main_reply_markup, parse_mode=ParseMode.MARKDOWN)
-        else:
-             await message.reply_text(error_text, reply_markup=main_reply_markup, parse_mode=ParseMode.MARKDOWN)
-        if os.path.exists(persistent_file_path):
-            try: os.remove(persistent_file_path)
-            except OSError: pass
-    finally:
-        if os.path.exists(temp_download_path):
-            try: os.remove(temp_download_path)
-            except OSError as e: logger.warning(f"Could not remove temp rotation download file {temp_download_path}: {e}")
-
-async def finish_rotation_setup(update: Update, context: CallbackContext) -> None:
-    """Finishes the rotation setup process."""
-    if not await check_channel_membership(update, context):
-        return
-
-    user = update.effective_user
-    message = update.message
-    if not user or not message: return
-    user_id = user.id
-
-    pending_rotation = context.user_data.get('pending_rotation')
-    if not pending_rotation:
-        await message.reply_text("No rotation setup in progress.", reply_markup=main_reply_markup)
-        return
-
-    files = pending_rotation['files']
-    min_files = pending_rotation['min_files']
-    
-    if len(files) < min_files:
-        await message.reply_text(
-            f"You need to add at least {min_files} files to the rotation. You have added {len(files)} so far.",
-            reply_markup=main_reply_markup
-        )
-        return
-
-    # Create a temporary progress message
-    progress_msg = await message.reply_text("⏳ Saving rotation configuration...")
-    await save_rotation_setup(update, context, progress_msg)
-
-async def save_rotation_setup(update: Update, context: CallbackContext, progress_msg) -> None:
-    """Saves the completed rotation setup."""
-    user = update.effective_user
-    message = update.message
-    if not user: return
-    user_id = user.id
-
-    pending_rotation = context.user_data.get('pending_rotation')
-    if not pending_rotation:
-        return
-
-    rotation_name = pending_rotation['rotation_name']
-    interval_seconds = pending_rotation['interval_seconds']
-    files = pending_rotation['files']
-
-    try:
-        rotations = load_rotation_files()
-        user_id_str = str(user_id)
-        now_utc = datetime.now(timezone.utc)
-        next_run_time = now_utc + timedelta(seconds=interval_seconds)
-
-        if user_id_str not in rotations:
-            rotations[user_id_str] = {}
-
-        # Save rotation configuration
-        rotations[user_id_str][rotation_name] = {
-            'interval_seconds': interval_seconds,
-            'files': files,
-            'current_file_index': 0,
-            'last_run_time_iso': None,
-            'next_run_time_iso': next_run_time.isoformat(),
-            'added_on_iso': now_utc.isoformat(),
-            'rotation_name': rotation_name
-        }
-
-        if save_rotation_files(rotations):
-            logger.info(f"Successfully saved rotation config for '{rotation_name}', user {user_id}.")
-            confirmation_text = (
-                f"✅ **File Rotation Set Successfully!**\n\n"
-                f"🏷️ **Rotation Name:** `{escape(rotation_name)}`\n"
-                f"📄 **Files in Rotation:** {len(files)}\n"
-                f"🔄 **Interval:** {format_time(interval_seconds)}\n"
-                f"⏰ **Next Run:** `{next_run_time.strftime('%Y-%m-%d %H:%M:%S UTC')}` (approximately)\n\n"
-                f"The bot will now automatically process files in rotation and upload tokens to GitHub (if configured) every {format_time(interval_seconds)}.\n"
-                f"Use /listrotations to view or /removerotation to stop."
-            )
-            await context.bot.edit_message_text(
-                chat_id=progress_msg.chat_id, message_id=progress_msg.message_id,
-                text=confirmation_text, parse_mode=ParseMode.MARKDOWN
-            )
-            context.user_data.pop('pending_rotation', None)
-        else:
-             logger.error(f"Failed to save rotation config file after setting '{rotation_name}' for user {user_id}.")
-             # Clean up stored files
-             for file_info in files:
-                 stored_path = file_info.get('stored_file_path')
-                 if stored_path and os.path.exists(stored_path):
-                     try: os.remove(stored_path)
-                     except OSError as del_err: logger.error(f"Failed cleanup: Could not delete stored file {stored_path} after config save error: {del_err}")
-             raise IOError("Failed to save the updated rotation configuration file.")
-
-    except (IOError, OSError) as e:
-        logger.error(f"Error saving rotation '{rotation_name}' for user {user_id}: {e}", exc_info=False)
-        error_text = f"❌ Error saving rotation `'{escape(rotation_name)}'`:\n`{escape(str(e))}`\n\nPlease try again or use /cancel."
-        await context.bot.edit_message_text(
-            chat_id=progress_msg.chat_id, message_id=progress_msg.message_id,
-            text=error_text, parse_mode=ParseMode.MARKDOWN
-        )
-        context.user_data.pop('pending_rotation', None)
-    except Exception as e:
-        logger.error(f"Unexpected error saving rotation '{rotation_name}' for user {user_id}: {e}", exc_info=True)
-        error_text = f"❌ An unexpected error occurred while saving rotation `'{escape(rotation_name)}'`."
-        try:
-             await context.bot.edit_message_text(
-                  chat_id=progress_msg.chat_id, message_id=progress_msg.message_id,
-                  text=error_text, parse_mode=ParseMode.MARKDOWN
-              )
-        except TelegramError as edit_err:
-             logger.error(f"Failed to edit progress message in general exception block: {edit_err}")
-             await message.reply_text(error_text, reply_markup=main_reply_markup, parse_mode=ParseMode.MARKDOWN)
-        context.user_data.pop('pending_rotation', None)
-
-async def remove_rotation(update: Update, context: CallbackContext) -> None:
-    """Removes a specific rotation configuration and its stored files."""
-    if not await check_channel_membership(update, context):
-        return
-
-    user = update.effective_user
-    message = update.message
-    if not user or not message: return
-    user_id = user.id
-    add_known_user(user.id)
-    context.user_data.pop('pending_rotation', None)
-    context.user_data.pop('waiting_for_json', None)
-
-    if not is_user_vip(user.id):
-        await message.reply_text(
-            "❌ File rotation management is a VIP feature.",
-            reply_markup=main_reply_markup
-        )
-        return
-
-    args = context.args
-    usage_text = "Usage: `/removerotation <RotationName>`"
-
-    if len(args) != 1:
-        await message.reply_text(
-            f"❌ Incorrect number of arguments.\n\n{usage_text}",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=main_reply_markup
-        )
-        return
-
-    rotation_name_to_remove = args[0]
-
-    rotations = load_rotation_files()
-    user_id_str = str(user_id)
-
-    if user_id_str not in rotations or rotation_name_to_remove not in rotations[user_id_str]:
-        await message.reply_text(
-            f"ℹ️ No rotation found with the name `'{escape(rotation_name_to_remove)}'`. "
-            f"Use /listrotations to see your active rotations.",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=main_reply_markup
-        )
-        return
-
-    rotation_info = rotations[user_id_str][rotation_name_to_remove]
-    files = rotation_info.get('files', [])
-    display_name = rotation_info.get('rotation_name', rotation_name_to_remove)
-
-    # Delete stored files
-    file_delete_success_count = 0
-    file_delete_errors = []
-    
-    for file_info in files:
-        stored_file_path = file_info.get('stored_file_path')
-        if stored_file_path and os.path.exists(stored_file_path):
-            try:
-                os.remove(stored_file_path)
-                file_delete_success_count += 1
-                logger.info(f"Deleted stored file for rotation '{rotation_name_to_remove}' user {user_id}: {stored_file_path}")
-            except OSError as e:
-                file_delete_errors.append(os.path.basename(stored_file_path))
-                logger.error(f"Failed to delete stored file {stored_file_path} for rotation '{rotation_name_to_remove}' user {user_id}: {e}")
-
-    # Remove rotation from config
-    del rotations[user_id_str][rotation_name_to_remove]
-    if not rotations[user_id_str]:
-        del rotations[user_id_str]
-
-    config_save_success = save_rotation_files(rotations)
-    
-    response_parts = []
-    if config_save_success:
-        response_parts.append(f"✅ Rotation `'{escape(display_name)}'` removed successfully.")
-        logger.info(f"Removed rotation '{rotation_name_to_remove}' for user {user_id}.")
-    else:
-        response_parts.append(f"⚠️ Failed to save the configuration after removing rotation `'{escape(display_name)}'`. It might reappear temporarily.")
-
-    if files:
-        if file_delete_errors:
-            response_parts.append(f"✅ Deleted {file_delete_success_count} stored files.")
-            response_parts.append(f"⚠️ Could not delete some stored files: {escape(', '.join(file_delete_errors))}")
-        else:
-            response_parts.append(f"✅ Deleted all {file_delete_success_count} stored files.")
-    else:
-        response_parts.append("ℹ️ No stored files found for this rotation.")
-
-    await message.reply_text("\n".join(response_parts), parse_mode=ParseMode.MARKDOWN, reply_markup=main_reply_markup)
-
-async def list_rotations(update: Update, context: CallbackContext) -> None:
-    """Lists the user's currently active rotations."""
-    if not await check_channel_membership(update, context):
-        return
-
-    user = update.effective_user
-    message = update.message
-    if not user or not message: return
-    user_id = user.id
-    add_known_user(user.id)
-    context.user_data.pop('pending_rotation', None)
-    context.user_data.pop('waiting_for_json', None)
-
-    if not is_user_vip(user.id):
-        await message.reply_text(
-            "ℹ️ File rotation is a VIP feature. Use /vipshop to upgrade.",
-            reply_markup=main_reply_markup
-        )
-        return
-
-    rotations = load_rotation_files()
-    user_id_str = str(user.id)
-    user_rotations = rotations.get(user_id_str, {})
-
-    if not user_rotations:
-        await message.reply_text(
-            "ℹ️ You have no file rotations currently set up.\n\n"
-            "Use `/setrotation <Interval> <RotationName>` to set one up.",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=main_reply_markup
-        )
-        return
-
-    message_parts = ["🔄 *Your File Rotations for Auto-Processing:*\n"]
-    now_utc = datetime.now(timezone.utc)
-
-    sorted_rotation_items = sorted(
-        user_rotations.items(),
-        key=lambda item: item[1].get('rotation_name', item[0])
-    )
-
-    for rotation_name, details in sorted_rotation_items:
-        if not isinstance(details, dict): continue
-
-        display_name = details.get('rotation_name', rotation_name)
-        interval_s = details.get('interval_seconds')
-        next_run_iso = details.get('next_run_time_iso')
-        last_run_iso = details.get('last_run_time_iso')
-        files = details.get('files', [])
-        current_index = details.get('current_file_index', 0)
-
-        message_parts.append(f"\n🏷️ **Name:** `{escape(display_name)}`")
-        message_parts.append(f"   📄 *Files in Rotation:* {len(files)}")
-        message_parts.append(f"   🔁 *Current File Index:* {current_index + 1}")
-        if interval_s and isinstance(interval_s, int):
-            message_parts.append(f"   🔄 *Interval:* {format_time(interval_s)}")
-        else:
-            message_parts.append(f"   🔄 *Interval:* `Error: Invalid/Not Set`")
-
-        if next_run_iso:
-            try:
-                next_run_dt = datetime.fromisoformat(next_run_iso.replace('Z', '+00:00'))
-                next_run_formatted = next_run_dt.strftime('%Y-%m-%d %H:%M UTC')
-                time_until_next = next_run_dt - now_utc
-                if time_until_next.total_seconds() > 0:
-                    remaining_str = format_time(time_until_next.total_seconds())
-                    message_parts.append(f"   ⏰ *Next Run:* {next_run_formatted} (`{remaining_str}`)")
-                else:
-                    message_parts.append(f"   ⏰ *Next Run:* {next_run_formatted} (`Due now or overdue`)")
-
-            except (ValueError, TypeError):
-                message_parts.append(f"   ⏰ *Next Run:* `Error: Invalid Date ({escape(str(next_run_iso)[:19])})`")
-        else:
-             message_parts.append(f"   ⏰ *Next Run:* `Not Scheduled Yet / Error`")
-
-        if last_run_iso:
-             try:
-                 last_run_dt = datetime.fromisoformat(last_run_iso.replace('Z', '+00:00'))
-                 last_run_formatted = last_run_dt.strftime('%Y-%m-%d %H:%M UTC')
-                 message_parts.append(f"   ⏱️ *Last Run:* {last_run_formatted}")
-             except (ValueError, TypeError):
-                 message_parts.append(f"   ⏱️ *Last Run:* `Invalid Date`")
-        else:
-             message_parts.append(f"   ⏱️ *Last Run:* `Never`")
-
-    message_parts.append("\nUse `/removerotation <RotationName>` to stop a rotation.")
-
-    final_message = "\n".join(message_parts)
-    if len(final_message) > 4096:
-        await message.reply_text("Your list of rotations is too long to display fully. Showing the first part:")
-        safe_truncate_point = final_message[:4050].rfind('\n')
-        if safe_truncate_point == -1: safe_truncate_point = 4050
-        await message.reply_text(final_message[:safe_truncate_point]+"...", parse_mode=ParseMode.MARKDOWN, reply_markup=main_reply_markup)
-    else:
-        await message.reply_text(final_message, parse_mode=ParseMode.MARKDOWN, reply_markup=main_reply_markup)
-
 # --- Admin Commands ---
 
 async def vip_management(update: Update, context: CallbackContext) -> None:
@@ -3036,9 +2491,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         if context.user_data.pop('pending_schedule', None):
             logger.info(f"Cleared 'pending_schedule' state for chat {chat_id_for_notify} due to error.")
             cleaned = True
-        if context.user_data.pop('pending_rotation', None):
-            logger.info(f"Cleared 'pending_rotation' state for chat {chat_id_for_notify} due to error.")
-            cleaned = True
         if context.user_data.pop('waiting_for_json', None):
              logger.info(f"Cleared 'waiting_for_json' state for chat {chat_id_for_notify} due to error.")
              cleaned = True
@@ -3266,148 +2718,6 @@ async def run_scheduled_file_processor(application: Application) -> None:
 
         await asyncio.sleep(AUTO_PROCESS_CHECK_INTERVAL)
 
-# --- Background Task for Rotation Processing ---
-
-async def run_rotation_processor(application: Application) -> None:
-    """Periodically checks for rotations and processes them."""
-    bot = application.bot
-    logger.info(f"Rotation processor started. Check interval: {AUTO_PROCESS_CHECK_INTERVAL}s")
-    await asyncio.sleep(30)  # Wait a bit longer than the main scheduler
-
-    while True:
-        try:
-            now_utc = datetime.now(timezone.utc)
-            logger.debug(f"Rotation processor check running at {now_utc.isoformat()}")
-            rotations = load_rotation_files()
-            if not rotations:
-                logger.debug("Rotation processor: No rotations found.")
-                await asyncio.sleep(AUTO_PROCESS_CHECK_INTERVAL)
-                continue
-
-            tasks_to_run = []
-            github_configs = load_github_configs()
-
-            for user_id_str in list(rotations.keys()):
-                user_rotations = rotations.get(user_id_str)
-                if not isinstance(user_rotations, dict):
-                    logger.warning(f"Rotation processor: Invalid rotation data format for user {user_id_str}. Skipping.")
-                    continue
-
-                try:
-                    user_id = int(user_id_str)
-                except ValueError:
-                    logger.warning(f"Rotation processor: Invalid user ID key '{user_id_str}' in rotations. Skipping.")
-                    continue
-
-                if not is_user_vip(user_id):
-                     logger.info(f"Rotation processor: User {user_id} is no longer VIP. Skipping their rotations.")
-                     continue
-
-                if not await is_user_joined_channel(bot, user_id):
-                    logger.info(f"Rotation processor: User {user_id} not joined to channel. Skipping rotations.")
-                    try:
-                        await bot.send_message(user_id, "⚠️ Your rotation processings are skipped because you are not joined to the channel. Please rejoin https://t.me/atxnaughty to resume.")
-                    except Exception as e:
-                        logger.error(f"Failed to notify user {user_id} about skipped rotations: {e}")
-                    continue
-
-                user_github_config = github_configs.get(user_id_str)
-
-                for rotation_name in list(user_rotations.keys()):
-                    rotation_info = user_rotations.get(rotation_name)
-                    if not isinstance(rotation_info, dict):
-                        logger.warning(f"Rotation processor: Invalid rotation entry '{rotation_name}' for user {user_id}. Skipping.")
-                        continue
-
-                    next_run_iso = rotation_info.get('next_run_time_iso')
-                    files = rotation_info.get('files', [])
-                    interval_seconds = rotation_info.get('interval_seconds')
-                    current_index = rotation_info.get('current_file_index', 0)
-
-                    if not next_run_iso or not files or not interval_seconds:
-                        logger.warning(f"Rotation processor: Skipping invalid rotation '{rotation_name}' for user {user_id} (missing essential info).")
-                        continue
-
-                    try:
-                        next_run_dt = datetime.fromisoformat(next_run_iso.replace('Z', '+00:00'))
-                    except (ValueError, TypeError):
-                        logger.warning(f"Rotation processor: Skipping rotation '{rotation_name}' for user {user_id} due to invalid next_run_time_iso: {next_run_iso}")
-                        continue
-
-                    if next_run_dt <= now_utc:
-                        logger.info(f"Rotation processor: Rotation '{rotation_name}' for user {user_id} is due. Preparing task.")
-                        # Get the current file to process
-                        if files:
-                            current_file = files[current_index]
-                            stored_file_path = current_file.get('stored_file_path')
-                            if stored_file_path and os.path.exists(stored_file_path):
-                                tasks_to_run.append(
-                                    process_single_rotation(
-                                        bot, user_id, rotation_name, rotation_info, current_file, user_github_config
-                                    )
-                                )
-                            else:
-                                logger.error(f"Rotation processor: Stored file missing for due rotation '{rotation_name}' user {user_id} at path {stored_file_path}. Skipping run and notifying user.")
-                                try:
-                                    await bot.send_message(
-                                        user_id,
-                                        f"⚠️ Error: Could not run rotation task `'{escape(rotation_info.get('rotation_name', rotation_name))}'`. The associated data file seems to be missing.",
-                                        parse_mode=ParseMode.MARKDOWN
-                                    )
-                                except Exception as notify_err:
-                                    logger.error(f"Rotation processor: Failed to notify user {user_id} about missing rotation file: {notify_err}")
-
-            if tasks_to_run:
-                logger.info(f"Rotation processor: Running {len(tasks_to_run)} due rotation(s).")
-                results = await asyncio.gather(*tasks_to_run, return_exceptions=True)
-
-                current_rotations = load_rotation_files()
-                made_changes = False
-                for result in results:
-                     if isinstance(result, tuple) and len(result) == 3:
-                        res_user_id_str, res_rotation_name, _ = result
-                        try:
-                            if res_user_id_str in current_rotations and res_rotation_name in current_rotations[res_user_id_str]:
-                                info = current_rotations[res_user_id_str][res_rotation_name]
-                                files = info.get('files', [])
-                                interval_s = info.get('interval_seconds')
-                                current_index = info.get('current_file_index', 0)
-                                
-                                if interval_s and isinstance(interval_s, int) and interval_s > 0 and files:
-                                    # Move to next file in rotation
-                                    next_index = (current_index + 1) % len(files)
-                                    last_run_time = datetime.now(timezone.utc)
-                                    next_run_time = last_run_time + timedelta(seconds=interval_s)
-                                    
-                                    current_rotations[res_user_id_str][res_rotation_name]['current_file_index'] = next_index
-                                    current_rotations[res_user_id_str][res_rotation_name]['last_run_time_iso'] = last_run_time.isoformat()
-                                    current_rotations[res_user_id_str][res_rotation_name]['next_run_time_iso'] = next_run_time.isoformat()
-                                    
-                                    made_changes = True
-                                    logger.info(f"Rotation processor: Updated rotation '{res_rotation_name}' (User {res_user_id_str}) to file index {next_index}, next run at {next_run_time.isoformat()}")
-                                else:
-                                     logger.error(f"Rotation processor: Cannot update rotation '{res_rotation_name}' (User {res_user_id_str}) - missing or invalid data.")
-                            else:
-                                 logger.info(f"Rotation processor: Rotation '{res_rotation_name}' for user {res_user_id_str} was removed before run time update.")
-                        except Exception as update_err:
-                            logger.error(f"Rotation processor: Error updating rotation info for User {res_user_id_str}, Rotation {res_rotation_name}: {update_err}", exc_info=True)
-
-                     elif isinstance(result, Exception):
-                         logger.error(f"Rotation processor: Error result returned from rotation task processing: {result}", exc_info=result)
-
-                if made_changes:
-                    if not save_rotation_files(current_rotations):
-                        logger.error("Rotation processor: CRITICAL - Failed to save updated rotation run times!")
-
-            else:
-                logger.debug("Rotation processor: No rotations were due this cycle.")
-
-        except Exception as loop_err:
-            logger.critical(f"Rotation processor: Unhandled exception in main processing loop: {loop_err}", exc_info=True)
-            await asyncio.sleep(60)
-
-        await asyncio.sleep(AUTO_PROCESS_CHECK_INTERVAL)
-
 async def process_single_schedule(bot, user_id: int, schedule_name: str, schedule_info: dict, github_config: dict | None) -> tuple[str, str, bool]:
     """
     Processes a single scheduled file: reads data, calls API, uploads to GitHub.
@@ -3581,181 +2891,6 @@ async def process_single_schedule(bot, user_id: int, schedule_name: str, schedul
 
     return user_id_str, schedule_name, final_success_state
 
-async def process_single_rotation(bot, user_id: int, rotation_name: str, rotation_info: dict, current_file: dict, github_config: dict | None) -> tuple[str, str, bool]:
-    """
-    Processes a single file from a rotation: reads data, calls API, uploads to GitHub.
-    Returns (user_id_str, rotation_name, github_upload_success_or_skipped)
-    """
-    user_id_str = str(user_id)
-    stored_file_path = current_file.get('stored_file_path')
-    display_name = rotation_info.get('rotation_name', rotation_name)
-    current_index = rotation_info.get('current_file_index', 0)
-    files = rotation_info.get('files', [])
-    github_upload_status = False
-
-    log_prefix = f"AutoProcess User {user_id} Rotation '{rotation_name}' File {current_index+1}/{len(files)}:"
-    logger.info(f"{log_prefix} Starting.")
-
-    notify_parts = [f"🔄 Auto-processing file {current_index+1}/{len(files)} from rotation `'{escape(display_name)}'`..."]
-    status_msg_obj = None
-    try:
-        status_msg_obj = await bot.send_message(user_id, notify_parts[0], parse_mode=ParseMode.MARKDOWN)
-    except Exception as e:
-        logger.error(f"{log_prefix} Failed to send initial status DM: {e}")
-
-    accounts_data = []
-    run_timestamp = int(time.time())
-    temp_results_dir = os.path.join(TEMP_DIR, f"rotation_{user_id}_{rotation_name}_{current_index}_{run_timestamp}")
-    cleanup_paths_auto = [temp_results_dir]
-    jwt_token_path_for_upload = None
-
-    try:
-        if not stored_file_path or not os.path.exists(stored_file_path):
-            raise FileNotFoundError(f"Stored file path missing or file not found: {stored_file_path}")
-
-        await update_schedule_status(bot, status_msg_obj, notify_parts, "Reading stored file...", keep_last=False)
-
-        with open(stored_file_path, 'r', encoding='utf-8') as f:
-            try:
-                accounts_data = json.load(f)
-                if not isinstance(accounts_data, list):
-                    raise ValueError("JSON content must be an array (list).")
-                if accounts_data and not all(isinstance(item, dict) for item in accounts_data):
-                     first_bad = next((x for x in accounts_data if not isinstance(x, dict)), None)
-                     raise ValueError(f"All items in the list must be JSON objects (`{{...}}`). Found: {type(first_bad)}")
-                logger.info(f"{log_prefix} Read {len(accounts_data)} accounts from {stored_file_path}")
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Invalid JSON format in stored file: {e.msg} (Line: {e.lineno}, Col: {e.colno})")
-            except ValueError as ve:
-                 raise ve
-            except Exception as read_err:
-                 raise IOError(f"Could not read or validate the downloaded file: {read_err}")
-
-        total_count = len(accounts_data)
-        if total_count == 0:
-            logger.info(f"{log_prefix} Stored file is empty. No processing needed.")
-            await update_schedule_status(bot, status_msg_obj, notify_parts, "✅ Finished: Stored file was empty.", is_final=True)
-            return user_id_str, rotation_name, True
-
-        await update_schedule_status(bot, status_msg_obj, notify_parts, f"Processing {total_count} accounts via API...", keep_last=False)
-
-        start_time = time.time()
-        successful_tokens = []
-        lost_accounts = []
-        errors_summary = defaultdict(int)
-        successful_by_region = defaultdict(list)
-        working_by_region = defaultdict(list)
-        processed_count = 0
-
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
-        async with aiohttp.ClientSession() as session:
-            tasks = [process_account(session, account, semaphore) for account in accounts_data]
-
-            for i, future in enumerate(asyncio.as_completed(tasks)):
-                update_freq_auto = max(5, min(50, total_count // 10))
-                if status_msg_obj and (i + 1) % update_freq_auto == 0:
-                     progress_pct = ((i + 1) / total_count) * 100
-                     await update_schedule_status(bot, status_msg_obj, notify_parts, f"Processing API... {i+1}/{total_count} ({progress_pct:.0f}%)", keep_last=False)
-
-                try:
-                    token, region, working_acc, lost_acc, error_reason = await future
-                    processed_count += 1
-                    if token and working_acc:
-                        region_name = region if region else "Unknown"
-                        successful_tokens.append({"token": token, "region": region_name})
-                        successful_by_region[region_name].append({"token": token})
-                        working_by_region[region_name].append(working_acc)
-                    elif lost_acc:
-                        lost_accounts.append(lost_acc)
-                        reason = lost_acc.get("error_reason", "Unknown")
-                        errors_summary[reason.split(':')[0].strip()] += 1
-                    else:
-                         lost_accounts.append({"account_info": "unknown", "error_reason": "Unexpected process_account result"})
-                         errors_summary["Processing function error"] += 1
-                except Exception as task_err:
-                    processed_count += 1
-                    logger.error(f"{log_prefix} Error retrieving result from API task: {task_err}", exc_info=True)
-                    lost_accounts.append({"account_info": "unknown", "error_reason": f"Task Error: {task_err}"})
-                    errors_summary["Internal task error"] += 1
-
-        processing_time = time.time() - start_time
-        logger.info(f"{log_prefix} API processing finished in {processing_time:.2f}s. Success: {len(successful_tokens)}, Failed: {len(lost_accounts)}")
-        notify_parts.append(f"📊 API Results: {len(successful_tokens)} tokens generated, {len(lost_accounts)} failures.")
-        if errors_summary:
-             top_errors = sorted(errors_summary.items(), key=lambda item: item[1], reverse=True)
-             error_snippets = []
-             for err_msg, count in top_errors[:2]:
-                 error_snippets.append(f"`{escape(err_msg)}` ({count})")
-             notify_parts.append(f"   (Top errors: {'; '.join(error_snippets)})")
-
-        if successful_tokens:
-            await update_schedule_status(bot, status_msg_obj, notify_parts, "Preparing token file for upload...", keep_last=False)
-            os.makedirs(temp_results_dir, exist_ok=True)
-            jwt_token_path_for_upload = os.path.join(temp_results_dir, 'all_server_token_auto.json')
-            tokens_only_list = [{"token": entry["token"]} for entry in successful_tokens if entry.get("token")]
-            if tokens_only_list:
-                if not save_json_data(jwt_token_path_for_upload, tokens_only_list):
-                    jwt_token_path_for_upload = None
-                    raise IOError("Failed to save temporary token file for upload.")
-                logger.info(f"{log_prefix} Saved {len(tokens_only_list)} tokens to {jwt_token_path_for_upload}")
-            else:
-                jwt_token_path_for_upload = None
-                logger.info(f"{log_prefix} No valid tokens found found to save for upload, although processing reported successes.")
-                notify_parts.append("ℹ️ No valid tokens found, skipping GitHub upload.")
-                github_upload_status = True
-        else:
-            logger.info(f"{log_prefix} No successful tokens generated. Skipping GitHub upload prep.")
-            notify_parts.append("ℹ️ No successful tokens, skipping GitHub upload.")
-            github_upload_status = True
-
-        if jwt_token_path_for_upload and github_config and isinstance(github_config, dict):
-            await update_schedule_status(bot, status_msg_obj, notify_parts, "Attempting GitHub upload...", keep_last=False)
-            upload_success = await upload_to_github_background(
-                bot, user_id, jwt_token_path_for_upload, github_config
-            )
-            github_upload_status = upload_success
-            logger.info(f"{log_prefix} GitHub upload finished. Success: {upload_success}")
-        elif jwt_token_path_for_upload:
-            logger.info(f"{log_prefix} Tokens generated but GitHub not configured or config invalid. Skipping upload.")
-            notify_parts.append("ℹ️ GitHub upload skipped (not configured or config invalid). Use /mygithub & /setgithub.")
-            await update_schedule_status(bot, status_msg_obj, notify_parts, "Skipped GitHub upload (no config).", keep_last=False)
-            github_upload_status = True
-
-        final_status_line = "✅ Auto-processing completed."
-        if jwt_token_path_for_upload and github_config and not github_upload_status:
-             final_status_line = "⚠️ Auto-processing completed, but GitHub upload failed (see details above)."
-
-        await update_schedule_status(bot, status_msg_obj, notify_parts, final_status_line, is_final=True)
-        logger.info(f"{log_prefix} Finished. Overall Success (for rotation processor): {github_upload_status or (not jwt_token_path_for_upload)}")
-
-        final_success_state = github_upload_status or (not jwt_token_path_for_upload)
-
-    except Exception as e:
-        logger.error(f"{log_prefix} FAILED: {e}", exc_info=True)
-        final_success_state = False
-        try:
-            error_msg = f"❌ **FAILED:** Auto-processing for rotation `'{escape(display_name)}'` encountered an error:\n`{escape(str(e))}`"
-            if status_msg_obj:
-                 await update_schedule_status(bot, status_msg_obj, notify_parts, error_msg, is_final=True)
-            else:
-                await bot.send_message(user_id, error_msg, parse_mode=ParseMode.MARKDOWN)
-        except Exception as notify_err:
-            logger.error(f"{log_prefix} Could not notify user about processing failure: {notify_err}")
-
-    finally:
-        for path in cleanup_paths_auto:
-            if os.path.exists(path):
-                try:
-                    if os.path.isdir(path):
-                        shutil.rmtree(path)
-                    else:
-                        os.remove(path)
-                    logger.debug(f"{log_prefix} Cleaned up temp path: {path}")
-                except OSError as e:
-                    logger.warning(f"{log_prefix} Could not clean up temp path {path}: {e}")
-
-    return user_id_str, rotation_name, final_success_state
-
 async def update_schedule_status(bot, status_msg_obj, notify_parts: list, new_status: str, keep_last=True, is_final=False):
     """Helper to update the status message sent to the user during auto-processing."""
     if not status_msg_obj: return
@@ -3862,12 +2997,6 @@ async def main() -> None:
     application.add_handler(CommandHandler("setfile", set_scheduled_file_start, filters=private_chat_filter))
     application.add_handler(CommandHandler("removefile", remove_scheduled_file, filters=private_chat_filter))
     application.add_handler(CommandHandler("scheduledfiles", list_scheduled_files, filters=private_chat_filter))
-    
-    # Rotation command handlers
-    application.add_handler(CommandHandler("setrotation", set_rotation_files_start, filters=private_chat_filter))
-    application.add_handler(CommandHandler("finishrotation", finish_rotation_setup, filters=private_chat_filter))
-    application.add_handler(CommandHandler("removerotation", remove_rotation, filters=private_chat_filter))
-    application.add_handler(CommandHandler("listrotations", list_rotations, filters=private_chat_filter))
     application.add_handler(MessageHandler(filters.Regex(f"^{re.escape(COMMAND_BUTTONS_LAYOUT[2][0])}$") & private_chat_filter, list_scheduled_files))
 
     application.add_handler(MessageHandler(filters.Text(COMMAND_BUTTONS_LAYOUT[0][0]) & private_chat_filter, handle_document))
@@ -3923,17 +3052,13 @@ async def main() -> None:
 
         scheduler_task = asyncio.create_task(run_scheduled_file_processor(application))
         logger.info("Background scheduler task created.")
-        
-        rotation_task = asyncio.create_task(run_rotation_processor(application))
-        logger.info("Background rotation processor task created.")
 
         await application.start()
         await application.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
         print("\n Bot is now polling for updates. Press Ctrl+C to stop.")
         print("="*60 + "\n")
 
-        # Wait for both tasks
-        await asyncio.gather(scheduler_task, rotation_task)
+        await scheduler_task
 
     except (TelegramError, ConnectionError) as e:
          print("\n" + "="*60)
@@ -3969,15 +3094,6 @@ async def main() -> None:
                    logger.info("Scheduler task cancelled successfully.")
               except Exception as task_err:
                   logger.error(f"Error during scheduler task cancellation/await: {task_err}")
-         if 'rotation_task' in locals() and not rotation_task.done():
-              logger.info("Cancelling rotation task...")
-              rotation_task.cancel()
-              try:
-                   await rotation_task
-              except asyncio.CancelledError:
-                   logger.info("Rotation task cancelled successfully.")
-              except Exception as task_err:
-                  logger.error(f"Error during rotation task cancellation/await: {task_err}")
          logger.info("Shutdown complete.")
 
 if __name__ == '__main__':
@@ -3991,6 +3107,4 @@ if __name__ == '__main__':
         logger.info("Bot stopped manually via KeyboardInterrupt.")
     except Exception as e:
         print(f"\n💥 A critical unhandled exception occurred outside the main asyncio loop: {e}")
-
         logger.critical(f"Critical unhandled exception in __main__: {e}", exc_info=True)
-
