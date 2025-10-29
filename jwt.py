@@ -30,8 +30,8 @@ from telegram.error import TelegramError, Forbidden, BadRequest
 TOKEN = "7161477910:AAFKz6L68vbciSirhl8IrDkIa_T3D8X0iqo"
 
 # API Configuration
-API_BASE_URL = "https://jwttokengenerator.vercel.app/token"
-API_KEY = "narayan"
+API_BASE_URL = "https://atx-drab.vercel.app/token"
+API_KEY = ""
 
 # Bot Settings
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
@@ -3991,4 +3991,5 @@ if __name__ == '__main__':
         logger.info("Bot stopped manually via KeyboardInterrupt.")
     except Exception as e:
         print(f"\n💥 A critical unhandled exception occurred outside the main asyncio loop: {e}")
+
         logger.critical(f"Critical unhandled exception in __main__: {e}", exc_info=True)
